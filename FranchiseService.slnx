@@ -1,0 +1,17 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/Core/">
+    <Project Path="src/Core/Franchise.Application/Franchise.Application.csproj" />
+    <Project Path="src/Core/Franchise.Domain/Franchise.Domain.csproj" />
+  </Folder>
+  <Folder Name="/src/Infrastructure/">
+    <Project Path="src/Infrastructure/Franchise.Infrastructure/Franchise.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/src/Presentation/">
+    <Project Path="src/Presentation/Franchise.Api/Franchise.Api.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Franchise.Application.Tests/Franchise.Application.Tests.csproj" />
+    <Project Path="tests/Franchise.Domain.Tests/Franchise.Domain.Tests.csproj" />
+  </Folder>
+</Solution>
