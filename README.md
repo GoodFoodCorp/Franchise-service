@@ -83,6 +83,32 @@ restaurants par défaut est créé.
 
 ---
 
+## Dépendances
+
+> **Légende** — 🔴 indispensable (le service ne démarre pas ou ne sert à rien) ·
+> 🟠 nécessaire à une fonctionnalité (le reste continue de marcher) ·
+> 🟡 optionnelle (dégradation silencieuse, journalisée)
+
+| Dépendance | Type | Conséquence si absente |
+|---|---|---|
+| **PostgreSQL** (`franchise-db`) | 🔴 | Le service ne démarre pas |
+| **auth-service** | 🟡 | **Au tout premier démarrage uniquement**, pour importer les restaurants historiques en préservant leurs identifiants. S'il est injoignable, un jeu de restaurants par défaut est créé (avec de **nouveaux** identifiants — à éviter si des données existent déjà ailleurs). Ensuite, plus aucun appel. |
+
+**Aucun autre appel sortant.**
+
+### Qui dépend de ce service
+
+| Service | Type | Conséquence si `franchise-service` est arrêté |
+|---|---|---|
+| `web-app` | 🔴 | La page d'accueil (liste des restaurants) est vide |
+| `menu-service` | 🟡 | Le seed des menus est reporté au prochain démarrage ; les menus existants restent servis |
+| `auth-service` | 🟡 | Au seed uniquement : les managers ne sont pas rattachés à leur restaurant |
+
+Tous les autres services **référencent** les identifiants de restaurant, mais
+sans jamais appeler ce service : ils fonctionnent donc normalement sans lui.
+
+---
+
 ## Lancement
 
 ```bash
