@@ -3,7 +3,7 @@ name: CI Docker franchise-service
 on:
   push:
     branches:
-      - deploy-automated
+      - develop
 
 jobs:
   build:
