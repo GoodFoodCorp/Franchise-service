@@ -32,6 +32,9 @@ public sealed class FranchiseDbContext(DbContextOptions<FranchiseDbContext> opti
         {
             e.ToTable("suppliers");
             e.HasKey(x => x.Id);
+            // The id is assigned by the domain (Guid.NewGuid()); without this EF treats a
+            // supplier added through Restaurant.Suppliers as existing and issues an UPDATE.
+            e.Property(x => x.Id).ValueGeneratedNever();
             e.Property(x => x.Name).HasMaxLength(200).IsRequired();
             e.Property(x => x.ContactName).HasMaxLength(200);
             e.Property(x => x.Email).HasMaxLength(200);
