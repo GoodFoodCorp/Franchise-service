@@ -120,7 +120,7 @@ using (var scope = app.Services.CreateScope())
     {
         try
         {
-            db.Database.Migrate();
+            await LockedMigrator.MigrateAsync(db);
             break;
         }
         catch (Exception ex) when (attempt < 15)
