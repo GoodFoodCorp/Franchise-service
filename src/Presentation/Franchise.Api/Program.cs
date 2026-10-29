@@ -26,6 +26,14 @@ builder.Services.AddControllers();
 // Shared HS256 secret issued by auth-service (see root README).
 var jwtSecret = builder.Configuration["JWT_SECRET"]
     ?? throw new InvalidOperationException("JWT_SECRET is required.");
+var jwtIssuer = builder.Configuration["JWT_ISSUER"] ?? "goodfood-auth";
+var jwtAudience = builder.Configuration["JWT_AUDIENCE"] ?? "goodfood-api";
+
+// Shared secret for service-to-service calls on /internal/... (X-Service-Key header).
+if (string.IsNullOrWhiteSpace(builder.Configuration["SERVICE_API_KEY"]))
+{
+    throw new InvalidOperationException("SERVICE_API_KEY is required.");
+}
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -35,9 +43,13 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         {
             ValidateIssuerSigningKey = true,
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
-            ValidateIssuer = false,
-            ValidateAudience = false,
+            ValidateIssuer = true,
+            ValidIssuer = jwtIssuer,
+            ValidateAudience = true,
+            ValidAudience = jwtAudience,
             ValidateLifetime = true,
+            RequireExpirationTime = true,
+            ValidAlgorithms = [SecurityAlgorithms.HmacSha256],
             ClockSkew = TimeSpan.FromSeconds(30),
             RoleClaimType = "role_slugs",
             NameClaimType = "sub",
@@ -50,6 +62,17 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     ctx.Request.Cookies.TryGetValue("auth_token", out var cookie))
                 {
                     ctx.Token = cookie;
+                }
+
+                return Task.CompletedTask;
+            },
+            // Only access tokens open the API: refresh tokens (typ=refresh,
+            // signed with another key anyway) and untyped tokens are refused.
+            OnTokenValidated = ctx =>
+            {
+                if (ctx.Principal?.FindFirst("typ")?.Value != "access")
+                {
+                    ctx.Fail("Not an access token.");
                 }
 
                 return Task.CompletedTask;

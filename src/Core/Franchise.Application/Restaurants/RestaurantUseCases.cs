@@ -9,28 +9,69 @@ namespace Franchise.Application.Restaurants;
 
 // ── Queries (public: the storefront lists restaurants) ──────
 
-public sealed record GetRestaurantsQuery(bool OnlyActive = true) : IRequest<IReadOnlyList<RestaurantDto>>;
+/// <summary>Lists restaurants. Inactive ones are only listed for head office.</summary>
+public sealed record GetRestaurantsQuery(bool IncludeInactive = false, CurrentUser? User = null)
+    : IRequest<IReadOnlyList<RestaurantDto>>;
 
-public sealed class GetRestaurantsHandler(IRestaurantRepository restaurants)
+public sealed class GetRestaurantsHandler(IRestaurantRepository restaurants, IClock clock)
     : IRequestHandler<GetRestaurantsQuery, IReadOnlyList<RestaurantDto>>
 {
     public async Task<IReadOnlyList<RestaurantDto>> Handle(GetRestaurantsQuery query, CancellationToken ct)
     {
-        var list = await restaurants.ListAsync(query.OnlyActive, ct);
-        return list.Select(r => r.ToDto()).ToList();
+        var onlyActive = !(query.IncludeInactive && query.User?.IsAdmin == true);
+        var list = await restaurants.ListAsync(onlyActive, ct);
+        var now = clock.UtcNow;
+        return list.Select(r => r.ToDto(now)).ToList();
     }
 }
 
 public sealed record GetRestaurantByIdQuery(Guid Id) : IRequest<RestaurantDto>;
 
-public sealed class GetRestaurantByIdHandler(IRestaurantRepository restaurants)
+public sealed class GetRestaurantByIdHandler(IRestaurantRepository restaurants, IClock clock)
     : IRequestHandler<GetRestaurantByIdQuery, RestaurantDto>
 {
     public async Task<RestaurantDto> Handle(GetRestaurantByIdQuery query, CancellationToken ct)
     {
         var restaurant = await restaurants.GetByIdAsync(query.Id, ct)
             ?? throw DomainException.NotFound("Restaurant not found.");
-        return restaurant.ToDto();
+        return restaurant.ToDto(clock.UtcNow);
+    }
+}
+
+/// <summary>Can this restaurant take an order for that address right now, and
+/// at what delivery fee? Used by the storefront before checkout and by
+/// order-service when the order is placed. Coordinates, when known, spare the
+/// geocoding.</summary>
+public sealed record QuoteDeliveryQuery(Guid RestaurantId, string? Address, double? Latitude, double? Longitude)
+    : IRequest<DeliveryQuoteDto>;
+
+public sealed class QuoteDeliveryHandler(IRestaurantRepository restaurants, IGeocoder geocoder, IClock clock)
+    : IRequestHandler<QuoteDeliveryQuery, DeliveryQuoteDto>
+{
+    public async Task<DeliveryQuoteDto> Handle(QuoteDeliveryQuery query, CancellationToken ct)
+    {
+        var restaurant = await restaurants.GetByIdAsync(query.RestaurantId, ct)
+            ?? throw DomainException.NotFound("Restaurant not found.");
+
+        if (query is { Latitude: { } lat, Longitude: { } lng })
+        {
+            return restaurant.Quote(clock.UtcNow, new Domain.ValueObjects.GeoPoint(lat, lng)).ToDto(restaurant.Id);
+        }
+
+        if (string.IsNullOrWhiteSpace(query.Address))
+        {
+            return restaurant.Quote(clock.UtcNow, null, dropoffLookedUp: false).ToDto(restaurant.Id);
+        }
+
+        try
+        {
+            var dropoff = await geocoder.GeocodeAsync(query.Address, ct);
+            return restaurant.Quote(clock.UtcNow, dropoff).ToDto(restaurant.Id);
+        }
+        catch (GeocodingUnavailableException)
+        {
+            return restaurant.Quote(clock.UtcNow, null, dropoffLookedUp: false).ToDto(restaurant.Id);
+        }
     }
 }
 
@@ -52,7 +93,7 @@ public sealed class CreateRestaurantValidator : AbstractValidator<CreateRestaura
     }
 }
 
-public sealed class CreateRestaurantHandler(IRestaurantRepository restaurants, IUnitOfWork uow)
+public sealed class CreateRestaurantHandler(IRestaurantRepository restaurants, IUnitOfWork uow, IGeocoder geocoder, IClock clock)
     : IRequestHandler<CreateRestaurantCommand, RestaurantDto>
 {
     public async Task<RestaurantDto> Handle(CreateRestaurantCommand cmd, CancellationToken ct)
@@ -69,9 +110,30 @@ public sealed class CreateRestaurantHandler(IRestaurantRepository restaurants, I
         }
 
         var restaurant = new RestaurantEntity(cmd.Name, slug, cmd.Address, cmd.City, cmd.Plan ?? "free");
+        restaurant.SetLocation(await TryLocate(geocoder, restaurant, ct));
         await restaurants.AddAsync(restaurant, ct);
         await uow.SaveChangesAsync(ct);
-        return restaurant.ToDto();
+        return restaurant.ToDto(clock.UtcNow);
+    }
+
+    /// <summary>Locates the restaurant; unknown while the provider is down
+    /// (located again on the next address update).</summary>
+    internal static async Task<Domain.ValueObjects.GeoPoint?> TryLocate(IGeocoder geocoder, RestaurantEntity r, CancellationToken ct)
+    {
+        var address = $"{r.Address}, {r.City}".Trim(' ', ',');
+        if (address.Length == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await geocoder.GeocodeAsync(address, ct);
+        }
+        catch (GeocodingUnavailableException)
+        {
+            return r.Location;
+        }
     }
 }
 
@@ -83,22 +145,97 @@ public sealed record UpdateRestaurantCommand(
     string City,
     bool IsActive) : IRequest<RestaurantDto>;
 
-public sealed class UpdateRestaurantHandler(IRestaurantRepository restaurants, IUnitOfWork uow)
+public sealed class UpdateRestaurantHandler(IRestaurantRepository restaurants, IUnitOfWork uow, IGeocoder geocoder, IClock clock)
     : IRequestHandler<UpdateRestaurantCommand, RestaurantDto>
 {
     public async Task<RestaurantDto> Handle(UpdateRestaurantCommand cmd, CancellationToken ct)
     {
-        var restaurant = await restaurants.GetByIdAsync(cmd.Id, ct)
-            ?? throw DomainException.NotFound("Restaurant not found.");
+        var restaurant = await RestaurantAccess.LoadEditable(restaurants, cmd.User, cmd.Id, ct);
 
-        // Head office may edit any restaurant; a manager only their own.
-        if (!cmd.User.IsAdmin && cmd.User.RequireOwnRestaurant() != restaurant.Id)
+        var moved = restaurant.Address != (cmd.Address ?? string.Empty).Trim() ||
+                    restaurant.City != (cmd.City ?? string.Empty).Trim() ||
+                    restaurant.Location is null;
+        // Only head office opens or closes a franchise in the network.
+        var isActive = cmd.User.IsAdmin ? cmd.IsActive : restaurant.IsActive;
+        restaurant.Update(cmd.Name, cmd.Address ?? string.Empty, cmd.City ?? string.Empty, isActive);
+        if (moved)
+        {
+            restaurant.SetLocation(await CreateRestaurantHandler.TryLocate(geocoder, restaurant, ct));
+        }
+
+        await uow.SaveChangesAsync(ct);
+        return restaurant.ToDto(clock.UtcNow);
+    }
+}
+
+public sealed record UpdateOperationsCommand(
+    CurrentUser User,
+    Guid Id,
+    string Phone,
+    string TimeZone,
+    IReadOnlyList<OpeningSlotDto> OpeningHours,
+    int PrepTimeMinutes,
+    double DeliveryRadiusKm,
+    long DeliveryFeeCents,
+    long MinimumOrderCents,
+    int SeatingCapacity) : IRequest<RestaurantDto>;
+
+public sealed class UpdateOperationsValidator : AbstractValidator<UpdateOperationsCommand>
+{
+    public UpdateOperationsValidator()
+    {
+        RuleFor(c => c.Phone).MaximumLength(50);
+        RuleFor(c => c.OpeningHours).NotNull();
+    }
+}
+
+public sealed class UpdateOperationsHandler(IRestaurantRepository restaurants, IUnitOfWork uow, IClock clock)
+    : IRequestHandler<UpdateOperationsCommand, RestaurantDto>
+{
+    public async Task<RestaurantDto> Handle(UpdateOperationsCommand cmd, CancellationToken ct)
+    {
+        var restaurant = await RestaurantAccess.LoadEditable(restaurants, cmd.User, cmd.Id, ct);
+        restaurant.UpdateOperations(
+            cmd.Phone,
+            string.IsNullOrWhiteSpace(cmd.TimeZone) ? RestaurantEntity.DefaultTimeZone : cmd.TimeZone,
+            cmd.OpeningHours.Select(s => s.ToDomain()).ToList(),
+            cmd.PrepTimeMinutes,
+            cmd.DeliveryRadiusKm,
+            cmd.DeliveryFeeCents,
+            cmd.MinimumOrderCents,
+            cmd.SeatingCapacity);
+        await uow.SaveChangesAsync(ct);
+        return restaurant.ToDto(clock.UtcNow);
+    }
+}
+
+/// <summary>Pauses or resumes new orders (kitchen rush, incident).</summary>
+public sealed record SetOrderIntakeCommand(CurrentUser User, Guid Id, bool AcceptingOrders) : IRequest<RestaurantDto>;
+
+public sealed class SetOrderIntakeHandler(IRestaurantRepository restaurants, IUnitOfWork uow, IClock clock)
+    : IRequestHandler<SetOrderIntakeCommand, RestaurantDto>
+{
+    public async Task<RestaurantDto> Handle(SetOrderIntakeCommand cmd, CancellationToken ct)
+    {
+        var restaurant = await RestaurantAccess.LoadEditable(restaurants, cmd.User, cmd.Id, ct);
+        restaurant.SetAcceptingOrders(cmd.AcceptingOrders);
+        await uow.SaveChangesAsync(ct);
+        return restaurant.ToDto(clock.UtcNow);
+    }
+}
+
+internal static class RestaurantAccess
+{
+    /// <summary>Head office may edit any restaurant; a manager only their own.</summary>
+    public static async Task<RestaurantEntity> LoadEditable(IRestaurantRepository restaurants, CurrentUser user, Guid id, CancellationToken ct)
+    {
+        var restaurant = await restaurants.GetByIdAsync(id, ct)
+            ?? throw DomainException.NotFound("Restaurant not found.");
+        if (!user.IsAdmin && user.RequireOwnRestaurant() != restaurant.Id)
         {
             throw DomainException.Forbidden("You can only edit your own restaurant.");
         }
 
-        restaurant.Update(cmd.Name, cmd.Address, cmd.City, cmd.IsActive);
-        await uow.SaveChangesAsync(ct);
-        return restaurant.ToDto();
+        return restaurant;
     }
 }

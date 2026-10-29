@@ -68,6 +68,25 @@ restaurants par défaut est créé.
 
 ---
 
+## Exploitation d'un restaurant
+
+Chaque restaurant porte, en plus de son identité :
+
+- **Coordonnées GPS**, calculées à partir de l'adresse (géocodage Nominatim,
+  cache 7 jours) à la création et à chaque changement d'adresse ;
+- **Horaires d'ouverture** hebdomadaires dans son fuseau (`Europe/Paris` par
+  défaut), une plage pouvant passer minuit ; sans horaires saisis, le
+  restaurant est considéré ouvert (compatibilité) ;
+- **Pause des commandes** (`acceptingOrders`) sans toucher aux horaires ;
+- **Zone de livraison** (rayon en km), **frais de livraison**, **minimum de
+  commande**, **temps de préparation**, **couverts** (capacité des réservations).
+
+Le **devis** (`quote`) répond : peut-on commander maintenant pour cette
+adresse ? Refus possibles : `INACTIVE`, `CLOSED`, `PAUSED`, `OUTOFZONE`,
+`UNKNOWNADDRESS`. Si le géocodeur est indisponible, la distance n'est pas
+vérifiée (le restaurant continue de vendre) ; le délai estimé vaut
+préparation + 5 min de retrait + trajet à 15 km/h.
+
 ## Endpoints
 
 | Méthode | Route | Accès |
@@ -75,7 +94,11 @@ restaurants par défaut est créé.
 | GET | `/api/restaurants` | public |
 | GET | `/api/restaurants/{id}` | public |
 | POST | `/api/restaurants` | `admin` |
-| PATCH | `/api/restaurants/{id}` | `admin`, `manager` (le sien) |
+| PATCH | `/api/restaurants/{id}` | `admin`, `manager` (le sien — seul le siège active/désactive) |
+| PUT | `/api/restaurants/{id}/operations` | `admin`, `manager` (le sien) — horaires, zone et frais de livraison, temps de préparation, couverts |
+| PUT | `/api/restaurants/{id}/order-intake` | `admin`, `manager` (le sien) — `{acceptingOrders}` : pause des commandes |
+| GET | `/api/restaurants/{id}/quote?address=` (ou `lat`/`lng`) | public — commande possible ? frais, distance, délai estimé |
+| POST | `/internal/restaurants/{id}/quote` | interne `X-Service-Key` (order-service) — `{address, latitude, longitude}` |
 | GET | `/api/franchise/suppliers` | `manager`, `admin` |
 | POST | `/api/franchise/suppliers` | `manager`, `admin` |
 | DELETE | `/api/franchise/suppliers/{id}` | `manager` (le sien) |
@@ -124,7 +147,11 @@ docker compose up -d --build
 | Variable | Requis | Description |
 |---|---|---|
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | oui | Base dédiée `franchise-db` |
-| `JWT_SECRET` | oui | Secret HS256 partagé avec `auth-service` |
+| `JWT_SECRET` | oui | Secret HS256 partagé avec `auth-service` (32 octets minimum) |
+| `JWT_ISSUER` / `JWT_AUDIENCE` | non | Défauts `goodfood-auth` / `goodfood-api` |
+| `SERVICE_API_KEY` | oui | Clé `X-Service-Key` des routes `/internal` |
+| `GEOCODER_URL` | non | API compatible Nominatim (défaut OpenStreetMap public, ~1 req/s : utiliser une instance dédiée en production) ; `disabled` pour couper |
+| `GEOCODER_USER_AGENT` | non | User-Agent exigé par Nominatim |
 | `AUTH_SERVICE_URL` | non | Défaut `http://auth-service:8081` (import initial) |
 | `ConnectionStrings__FranchiseDb` | hors Docker | Chaîne de connexion Npgsql |
 
