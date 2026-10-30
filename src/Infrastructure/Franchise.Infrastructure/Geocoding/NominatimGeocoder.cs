@@ -12,7 +12,7 @@ namespace Franchise.Infrastructure.Geocoding;
 /// or a self-hosted instance via GEOCODER_URL for production volumes, since
 /// the public one allows about one request per second). Results, including
 /// misses, are cached: delivery addresses repeat a lot.</summary>
-public sealed class NominatimGeocoder(HttpClient http, IMemoryCache cache, ILogger<NominatimGeocoder> logger) : IGeocoder
+public sealed class NominatimGeocoder(HttpClient http, IMemoryCache cache, ServedCountries countries, ILogger<NominatimGeocoder> logger) : IGeocoder
 {
     private static readonly TimeSpan HitTtl = TimeSpan.FromDays(7);
     private static readonly TimeSpan MissTtl = TimeSpan.FromHours(1);
@@ -32,7 +32,7 @@ public sealed class NominatimGeocoder(HttpClient http, IMemoryCache cache, ILogg
         GeoPoint? result = null;
         try
         {
-            var url = $"search?format=json&limit=1&countrycodes=fr&q={Uri.EscapeDataString(address)}";
+            var url = $"search?format=json&limit=1&countrycodes={countries.AsQueryValue}&q={Uri.EscapeDataString(address)}";
             var places = await http.GetFromJsonAsync<List<Place>>(url, ct);
             if (places is [var first, ..] &&
                 double.TryParse(first.Lat, NumberStyles.Float, CultureInfo.InvariantCulture, out var lat) &&

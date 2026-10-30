@@ -1,11 +1,15 @@
+using System.Net;
 using System.Text;
+using System.Threading.RateLimiting;
 using Franchise.Api;
+using Franchise.Api.Controllers;
 using Franchise.Api.Middleware;
 using Franchise.Application;
 using Franchise.Infrastructure;
 using Franchise.Infrastructure.Bootstrap;
 using Franchise.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
@@ -25,6 +29,31 @@ builder.Services.AddInfrastructure(builder.Configuration);
 // Restaurants created before geocoding (or while it was down) get their coordinates.
 builder.Services.AddHostedService<RestaurantLocationBackfill>();
 builder.Services.AddControllers();
+
+// The client address behind the ingress / gateway (private networks only),
+// so per-client limits apply to the customer, not to the proxy.
+builder.Services.Configure<ForwardedHeadersOptions>(o =>
+{
+    o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    o.KnownNetworks.Clear();
+    o.KnownProxies.Clear();
+    foreach (var cidr in new[] { "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8" })
+    {
+        var parts = cidr.Split('/');
+        o.KnownNetworks.Add(new Microsoft.AspNetCore.HttpOverrides.IPNetwork(IPAddress.Parse(parts[0]), int.Parse(parts[1])));
+    }
+});
+
+// Address autocomplete calls an external provider: 60 lookups a minute per
+// client is plenty for a person typing (debounced) and stops scripted abuse.
+builder.Services.AddRateLimiter(o =>
+{
+    o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    o.AddPolicy(RestaurantsController.AddressSuggestionsPolicy, http =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            http.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions { PermitLimit = 60, Window = TimeSpan.FromMinutes(1) }));
+});
 
 // Shared HS256 secret issued by auth-service (see root README).
 var jwtSecret = builder.Configuration["JWT_SECRET"]
@@ -138,6 +167,7 @@ using (var scope = app.Services.CreateScope())
     await importer.ImportAsync(authUrl);
 }
 
+app.UseForwardedHeaders();
 app.UseMiddleware<RequestIdMiddleware>();
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseSerilogRequestLogging();
@@ -151,6 +181,7 @@ app.UseSwaggerUI(c =>
 
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 
 app.MapControllers();
 app.MapHealthChecks("/readyz");
