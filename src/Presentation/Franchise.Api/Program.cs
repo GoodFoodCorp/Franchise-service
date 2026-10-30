@@ -1,4 +1,5 @@
 using System.Text;
+using Franchise.Api;
 using Franchise.Api.Middleware;
 using Franchise.Application;
 using Franchise.Infrastructure;
@@ -21,6 +22,8 @@ builder.Host.UseSerilog((_, cfg) => cfg
 
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
+// Restaurants created before geocoding (or while it was down) get their coordinates.
+builder.Services.AddHostedService<RestaurantLocationBackfill>();
 builder.Services.AddControllers();
 
 // Shared HS256 secret issued by auth-service (see root README).
