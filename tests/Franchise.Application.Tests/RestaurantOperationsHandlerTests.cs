@@ -128,6 +128,29 @@ public class RestaurantOperationsHandlerTests
     }
 
     [Fact]
+    public async Task Restaurants_without_coordinates_are_located_once()
+    {
+        var located = new Restaurant("Located", "located", "1 place de la République", "Paris", "free");
+        located.SetLocation(Republique);
+        var unplaced = new Restaurant("Unplaced", "unplaced", "5 rue du Départ", "Paris", "free");
+        var unknown = new Restaurant("Unknown", "unknown", "nowhere", "Atlantis", "free");
+        _restaurants.Setup(r => r.ListAsync(false, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([located, unplaced, unknown]);
+        _geocoder.Setup(g => g.GeocodeAsync("5 rue du Départ, Paris", It.IsAny<CancellationToken>())).ReturnsAsync(Bastille);
+        _geocoder.Setup(g => g.GeocodeAsync("nowhere, Atlantis", It.IsAny<CancellationToken>())).ReturnsAsync((GeoPoint?)null);
+        var handler = new LocateUnplacedRestaurantsHandler(_restaurants.Object, _uow.Object, _geocoder.Object);
+
+        var count = await handler.Handle(new LocateUnplacedRestaurantsCommand(TimeSpan.Zero), default);
+
+        count.Should().Be(1);
+        unplaced.Location.Should().Be(Bastille);
+        unknown.Location.Should().BeNull();
+        located.Location.Should().Be(Republique);
+        _geocoder.Verify(g => g.GeocodeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+        _uow.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task Inactive_restaurants_are_listed_for_head_office_only()
     {
         _restaurants.Setup(r => r.ListAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
