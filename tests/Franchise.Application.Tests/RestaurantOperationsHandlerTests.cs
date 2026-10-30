@@ -163,3 +163,33 @@ public class RestaurantOperationsHandlerTests
         _restaurants.Verify(r => r.ListAsync(false, It.IsAny<CancellationToken>()), Times.Once, "admin: everything");
     }
 }
+
+public class SuggestAddressesHandlerTests
+{
+    private readonly Mock<IAddressSuggester> _suggester = new();
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("ab")]
+    [InlineData("   ")]
+    public async Task Too_short_a_query_asks_nothing(string? q)
+    {
+        var result = await new SuggestAddressesHandler(_suggester.Object).Handle(new SuggestAddressesQuery(q, null, null), default);
+
+        result.Should().BeEmpty();
+        _suggester.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Bounds_the_limit_and_fails_open_when_the_provider_is_down()
+    {
+        _suggester.Setup(s => s.SuggestAsync("rue de rennes", It.IsAny<GeoPoint?>(), 8, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new GeocodingUnavailableException("down"));
+
+        var result = await new SuggestAddressesHandler(_suggester.Object)
+            .Handle(new SuggestAddressesQuery("  rue de rennes ", 48.84, 2.32, Limit: 500), default);
+
+        result.Should().BeEmpty();
+        _suggester.Verify(s => s.SuggestAsync("rue de rennes", new GeoPoint(48.84, 2.32), 8, It.IsAny<CancellationToken>()), Times.Once);
+    }
+}

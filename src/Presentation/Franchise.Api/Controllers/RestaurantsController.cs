@@ -4,6 +4,7 @@ using Franchise.Application.Restaurants;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace Franchise.Api.Controllers;
 
@@ -49,6 +50,18 @@ public sealed class RestaurantsController(IMediator mediator) : ControllerBase
 
     /// <summary>Can the restaurant deliver this address now, for what fee and
     /// in how long? Shown in the cart before checkout.</summary>
+    /// <summary>Address autocomplete (EU street addresses). lat/lng, e.g. the
+    /// restaurant's, rank nearby addresses first. Rate limited per client.</summary>
+    [HttpGet("address-suggestions")]
+    [AllowAnonymous]
+    [EnableRateLimiting(AddressSuggestionsPolicy)]
+    [ResponseCache(Duration = 300, Location = ResponseCacheLocation.Any)]
+    public async Task<IActionResult> SuggestAddresses(
+        [FromQuery] string? q, [FromQuery] double? lat, [FromQuery] double? lng, [FromQuery] int limit = 5, CancellationToken ct = default) =>
+        Ok(await mediator.Send(new SuggestAddressesQuery(q, lat, lng, limit), ct));
+
+    public const string AddressSuggestionsPolicy = "address-suggestions";
+
     [HttpGet("{id:guid}/quote")]
     [AllowAnonymous]
     public async Task<IActionResult> Quote(Guid id, [FromQuery] string? address, [FromQuery] double? lat, [FromQuery] double? lng, CancellationToken ct) =>
