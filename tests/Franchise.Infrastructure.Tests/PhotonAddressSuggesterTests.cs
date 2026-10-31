@@ -60,6 +60,27 @@ public class PhotonAddressSuggesterTests
             .And.Contain("bbox=1.924,48.573,2.724,49.113");
     }
 
+    private const string Places = """
+    {"features":[
+      {"geometry":{"coordinates":[1.0993,49.4431]},"properties":{"type":"city","osm_value":"city","name":"Rouen","country":"France","countrycode":"FR"}},
+      {"geometry":{"coordinates":[1.0993,49.4431]},"properties":{"type":"city","osm_value":"administrative","name":"Rouen","country":"France","countrycode":"FR"}},
+      {"geometry":{"coordinates":[-91.2,30.4]},"properties":{"type":"county","osm_value":"county","name":"Rouen","country":"United States","countrycode":"US"}},
+      {"geometry":{"coordinates":[1.09,49.44]},"properties":{"type":"other","osm_value":"postcode","name":"76000","city":"Rouen","country":"France","countrycode":"FR"}},
+      {"geometry":{"coordinates":[1.09,49.44]},"properties":{"type":"street","osm_value":"residential","name":"Rue de Rouen","postcode":"76000","city":"Rouen","country":"France","countrycode":"FR"}}
+    ]}
+    """;
+
+    [Fact]
+    public void Towns_and_postal_codes_come_only_when_places_are_wanted()
+    {
+        var response = System.Text.Json.JsonSerializer.Deserialize<PhotonAddressSuggester.PhotonResponse>(Places);
+
+        PhotonAddressSuggester.Map(response, ServedCountries.FromSetting(null), 5, withPlaces: true).Select(s => s.Label).Should().Equal(
+            "Rouen, France", "76000 Rouen, France", "Rue de Rouen, 76000 Rouen, France");
+        PhotonAddressSuggester.Map(response, ServedCountries.FromSetting(null), 5).Select(s => s.Label).Should().Equal(
+            "Rue de Rouen, 76000 Rouen, France");
+    }
+
     [Fact]
     public async Task A_provider_outage_is_reported_as_unavailable()
     {
