@@ -90,6 +90,8 @@ public sealed class CreateRestaurantValidator : AbstractValidator<CreateRestaura
     public CreateRestaurantValidator()
     {
         RuleFor(c => c.Name).NotEmpty().MaximumLength(200);
+        RuleFor(c => c.Address).NotEmpty().MaximumLength(300);
+        RuleFor(c => c.City).NotEmpty().MaximumLength(120);
     }
 }
 
@@ -110,10 +112,28 @@ public sealed class CreateRestaurantHandler(IRestaurantRepository restaurants, I
         }
 
         var restaurant = new RestaurantEntity(cmd.Name, slug, cmd.Address, cmd.City, cmd.Plan ?? "free");
-        restaurant.SetLocation(await TryLocate(geocoder, restaurant, ct));
+        restaurant.SetLocation(await LocateOrRefuse(geocoder, restaurant, ct));
         await restaurants.AddAsync(restaurant, ct);
         await uow.SaveChangesAsync(ct);
         return restaurant.ToDto(clock.UtcNow);
+    }
+
+    /// <summary>Locates a new or moved restaurant. An address the provider
+    /// does not know is refused: nobody could be delivered from it. While the
+    /// provider is down the restaurant stays unlocated (located again on the
+    /// next update or listing).</summary>
+    internal static async Task<Domain.ValueObjects.GeoPoint?> LocateOrRefuse(IGeocoder geocoder, RestaurantEntity r, CancellationToken ct)
+    {
+        var address = $"{r.Address}, {r.City}".Trim(' ', ',');
+        try
+        {
+            return await geocoder.GeocodeAsync(address, ct)
+                ?? throw DomainException.Validation("Address not found: check the number, street and city.");
+        }
+        catch (GeocodingUnavailableException)
+        {
+            return r.Location;
+        }
     }
 
     /// <summary>Locates the restaurant; unknown while the provider is down
@@ -160,7 +180,7 @@ public sealed class UpdateRestaurantHandler(IRestaurantRepository restaurants, I
         restaurant.Update(cmd.Name, cmd.Address ?? string.Empty, cmd.City ?? string.Empty, isActive);
         if (moved)
         {
-            restaurant.SetLocation(await CreateRestaurantHandler.TryLocate(geocoder, restaurant, ct));
+            restaurant.SetLocation(await CreateRestaurantHandler.LocateOrRefuse(geocoder, restaurant, ct));
         }
 
         await uow.SaveChangesAsync(ct);
