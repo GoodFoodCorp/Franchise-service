@@ -36,7 +36,10 @@ public sealed class RestaurantsController(IMediator mediator) : ControllerBase
     public async Task<IActionResult> List([FromQuery] bool includeInactive = false, CancellationToken ct = default)
     {
         CurrentUser? user = User.Identity?.IsAuthenticated == true ? CurrentUserFactory.FromClaims(User) : null;
-        Response.Headers.CacheControl = "public, max-age=30";
+        // Opening status changes at any time (a restaurant closes itself, its
+        // hours end): always revalidated, never served stale. Head office's
+        // list (inactive ones included) is never stored by a shared cache.
+        Response.Headers.CacheControl = includeInactive || user is not null ? "private, no-store" : "no-cache";
         return Ok(await mediator.Send(new GetRestaurantsQuery(includeInactive, user), ct));
     }
 
@@ -44,7 +47,8 @@ public sealed class RestaurantsController(IMediator mediator) : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> GetById(Guid id, CancellationToken ct)
     {
-        Response.Headers.CacheControl = "public, max-age=30";
+        // Its opening status changes at any time: revalidated on each read.
+        Response.Headers.CacheControl = "no-cache";
         return Ok(await mediator.Send(new GetRestaurantByIdQuery(id), ct));
     }
 
