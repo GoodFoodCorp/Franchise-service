@@ -19,6 +19,10 @@ public sealed record RestaurantDto(
     string TimeZone,
     IReadOnlyList<OpeningSlotDto> OpeningHours,
     bool IsOpenNow,
+    string OpenState,
+    string? ClosesAt,
+    int? NextOpeningDay,
+    string? NextOpeningTime,
     bool AcceptingOrders,
     int PrepTimeMinutes,
     double DeliveryRadiusKm,
@@ -55,12 +59,27 @@ public static class DtoMapping
 {
     private const string TimeFormat = "HH:mm";
 
-    public static RestaurantDto ToDto(this Restaurant r, DateTimeOffset now) =>
-        new(r.Id, r.Name, r.Slug, r.Address, r.City, r.Plan, r.IsActive,
+    public static RestaurantDto ToDto(this Restaurant r, DateTimeOffset now)
+    {
+        var status = r.StatusAt(now);
+        return new(r.Id, r.Name, r.Slug, r.Address, r.City, r.Plan, r.IsActive,
             r.Phone, r.Latitude, r.Longitude, r.TimeZone,
             r.OpeningHours.Select(s => new OpeningSlotDto(s.Day, s.Opens.ToString(TimeFormat), s.Closes.ToString(TimeFormat))).ToList(),
-            r.IsOpenAt(now), r.AcceptingOrders, r.PrepTimeMinutes, r.DeliveryRadiusKm,
+            status.IsOpen, StateName(status.State), status.ClosesAt?.ToString(TimeFormat),
+            status.NextDay is { } day ? (int)day : null, status.NextOpens?.ToString(TimeFormat),
+            r.AcceptingOrders, r.PrepTimeMinutes, r.DeliveryRadiusKm,
             r.DeliveryFeeCents, r.MinimumOrderCents, r.SeatingCapacity);
+    }
+
+    /// <summary>OPEN, CLOSED_BY_RESTAURANT, OUTSIDE_HOURS, NO_HOURS, INACTIVE.</summary>
+    private static string StateName(OpeningState state) => state switch
+    {
+        OpeningState.Open => "OPEN",
+        OpeningState.ClosedByRestaurant => "CLOSED_BY_RESTAURANT",
+        OpeningState.OutsideHours => "OUTSIDE_HOURS",
+        OpeningState.NoHours => "NO_HOURS",
+        _ => "INACTIVE",
+    };
 
     public static SupplierDto ToDto(this Supplier s) =>
         new(s.Id, s.RestaurantId, s.Name, s.ContactName, s.Email, s.Phone, s.CreatedAt);

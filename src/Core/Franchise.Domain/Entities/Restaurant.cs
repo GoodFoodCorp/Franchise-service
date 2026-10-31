@@ -27,6 +27,11 @@ public sealed class Restaurant
 
     private List<OpeningSlot> _openingHours = [];
 
+    /// <summary>The hours a new restaurant starts with, every day 11:00 to
+    /// 23:00, until its franchisee sets its own.</summary>
+    public static IReadOnlyList<OpeningSlot> DefaultOpeningHours { get; } =
+        Enum.GetValues<DayOfWeek>().Select(d => new OpeningSlot(d, new TimeOnly(11, 0), new TimeOnly(23, 0))).ToList();
+
     private Restaurant() { } // EF Core
 
     public Restaurant(string name, string slug, string address, string city, string plan = "free")
@@ -44,6 +49,7 @@ public sealed class Restaurant
         Plan = plan;
         IsActive = true;
         CreatedAt = DateTimeOffset.UtcNow;
+        _openingHours = DefaultOpeningHours.ToList();
     }
 
     /// <summary>Rehydrates a restaurant with a known id — used by the one-off
@@ -153,6 +159,19 @@ public sealed class Restaurant
             slot.Validate();
         }
 
+        // Two periods of the same day must not overlap (11:00-15:00 and 14:00-18:00).
+        foreach (var day in openingHours.GroupBy(s => s.Day))
+        {
+            var periods = day.OrderBy(s => s.Opens).ToList();
+            for (var i = 1; i < periods.Count; i++)
+            {
+                if (periods[i - 1].RunsPastMidnight || periods[i].Opens < periods[i - 1].Closes)
+                {
+                    throw DomainException.Validation("Two opening periods of the same day overlap.");
+                }
+            }
+        }
+
         if (prepTimeMinutes is < 1 or > 240)
         {
             throw DomainException.Validation("Preparation time must be between 1 and 240 minutes.");
@@ -185,18 +204,61 @@ public sealed class Restaurant
 
     public void SetAcceptingOrders(bool accepting) => AcceptingOrders = accepting;
 
-    /// <summary>Whether the restaurant is open at the given instant, in its
-    /// own time zone.</summary>
+    /// <summary>Whether the instant falls within the opening hours, in the
+    /// restaurant's own time zone. Without opening hours, never.</summary>
     public bool IsOpenAt(DateTimeOffset instant)
     {
-        if (_openingHours.Count == 0)
+        var (day, time) = LocalDayAndTime(instant);
+        return _openingHours.Any(s => s.Contains(day, time));
+    }
+
+    /// <summary>The status customers and the restaurant see: open (until
+    /// when), closed by the restaurant, outside hours (reopening when),
+    /// without hours or off the network.</summary>
+    public OpeningStatus StatusAt(DateTimeOffset instant)
+    {
+        if (!IsActive)
         {
-            return true;
+            return new OpeningStatus(OpeningState.Inactive);
         }
 
+        if (!AcceptingOrders)
+        {
+            return new OpeningStatus(OpeningState.ClosedByRestaurant);
+        }
+
+        if (_openingHours.Count == 0)
+        {
+            return new OpeningStatus(OpeningState.NoHours);
+        }
+
+        var (today, time) = LocalDayAndTime(instant);
+        var current = _openingHours.FirstOrDefault(s => s.Contains(today, time));
+        if (current is not null)
+        {
+            return new OpeningStatus(OpeningState.Open, ClosesAt: current.Closes);
+        }
+
+        for (var offset = 0; offset <= 7; offset++)
+        {
+            var day = (DayOfWeek)(((int)today + offset) % 7);
+            var next = _openingHours
+                .Where(s => s.Day == day && (offset > 0 || s.Opens > time))
+                .OrderBy(s => s.Opens)
+                .FirstOrDefault();
+            if (next is not null)
+            {
+                return new OpeningStatus(OpeningState.OutsideHours, NextDay: day, NextOpens: next.Opens);
+            }
+        }
+
+        return new OpeningStatus(OpeningState.OutsideHours);
+    }
+
+    private (DayOfWeek Day, TimeOnly Time) LocalDayAndTime(DateTimeOffset instant)
+    {
         var local = TimeZoneInfo.ConvertTime(instant, TimeZoneInfo.FindSystemTimeZoneById(TimeZone));
-        var time = TimeOnly.FromDateTime(local.DateTime);
-        return _openingHours.Any(s => s.Contains(local.DayOfWeek, time));
+        return (local.DayOfWeek, TimeOnly.FromDateTime(local.DateTime));
     }
 
     /// <summary>Decides whether an order can be taken now for the drop-off

@@ -46,9 +46,57 @@ public class RestaurantOperationsTests
     }
 
     [Fact]
-    public void Without_a_schedule_the_restaurant_is_always_open()
+    public void A_new_restaurant_opens_every_day_from_11_to_23()
     {
-        new Restaurant("Legacy", "legacy", "", "").IsOpenAt(TuesdayEightAmParisSummer).Should().BeTrue();
+        var r = new Restaurant("New", "new", "", "");
+
+        r.OpeningHours.Should().HaveCount(7).And.OnlyContain(s => s.Opens == new TimeOnly(11, 0) && s.Closes == new TimeOnly(23, 0));
+        r.IsOpenAt(TuesdayNoonParisSummer).Should().BeTrue();
+        r.IsOpenAt(TuesdayEightAmParisSummer).Should().BeFalse();
+    }
+
+    [Fact]
+    public void Without_opening_hours_the_restaurant_is_never_open()
+    {
+        var r = WithLunchService(x => x.UpdateOperations("", Restaurant.DefaultTimeZone, [], 20, 5, 299, 0, 40));
+
+        r.IsOpenAt(TuesdayNoonParisSummer).Should().BeFalse();
+        r.StatusAt(TuesdayNoonParisSummer).State.Should().Be(OpeningState.NoHours);
+        r.Quote(TuesdayNoonParisSummer, Bastille).Refusal.Should().Be(QuoteRefusal.Closed);
+    }
+
+    [Fact]
+    public void Status_tells_until_when_it_is_open_and_when_it_reopens()
+    {
+        var r = WithLunchService();
+
+        r.StatusAt(TuesdayNoonParisSummer).Should().Be(new OpeningStatus(OpeningState.Open, ClosesAt: new TimeOnly(14, 30)));
+        r.StatusAt(TuesdayEightAmParisSummer).Should().Be(
+            new OpeningStatus(OpeningState.OutsideHours, NextDay: DayOfWeek.Tuesday, NextOpens: new TimeOnly(11, 30)));
+        // Tuesday 15:00 in Paris: next opening is next Tuesday.
+        r.StatusAt(TuesdayNoonParisSummer.AddHours(3)).Should().Be(
+            new OpeningStatus(OpeningState.OutsideHours, NextDay: DayOfWeek.Tuesday, NextOpens: new TimeOnly(11, 30)));
+    }
+
+    [Fact]
+    public void Closed_by_the_restaurant_wins_over_its_hours()
+    {
+        var r = WithLunchService(x => x.SetAcceptingOrders(false));
+
+        r.StatusAt(TuesdayNoonParisSummer).Should().Be(new OpeningStatus(OpeningState.ClosedByRestaurant));
+        r.StatusAt(TuesdayNoonParisSummer).IsOpen.Should().BeFalse();
+        r.Update(r.Name, r.Address, r.City, isActive: false);
+        r.StatusAt(TuesdayNoonParisSummer).State.Should().Be(OpeningState.Inactive);
+    }
+
+    [Fact]
+    public void Overlapping_periods_of_a_day_are_refused()
+    {
+        var act = () => WithLunchService(x => x.UpdateOperations("", Restaurant.DefaultTimeZone,
+            [new OpeningSlot(DayOfWeek.Monday, new TimeOnly(11, 0), new TimeOnly(15, 0)),
+             new OpeningSlot(DayOfWeek.Monday, new TimeOnly(14, 0), new TimeOnly(18, 0))], 20, 5, 299, 0, 40));
+
+        act.Should().Throw<DomainException>();
     }
 
     [Fact]
