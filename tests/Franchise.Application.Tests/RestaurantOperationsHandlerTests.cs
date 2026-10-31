@@ -183,13 +183,25 @@ public class SuggestAddressesHandlerTests
     [Fact]
     public async Task Bounds_the_limit_and_fails_open_when_the_provider_is_down()
     {
-        _suggester.Setup(s => s.SuggestAsync("rue de rennes", It.IsAny<GeoPoint?>(), 8, It.IsAny<CancellationToken>()))
+        _suggester.Setup(s => s.SuggestAsync("rue de rennes", It.IsAny<GeoPoint?>(), 8, false, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new GeocodingUnavailableException("down"));
 
         var result = await new SuggestAddressesHandler(_suggester.Object)
             .Handle(new SuggestAddressesQuery("  rue de rennes ", 48.84, 2.32, Limit: 500), default);
 
         result.Should().BeEmpty();
-        _suggester.Verify(s => s.SuggestAsync("rue de rennes", new GeoPoint(48.84, 2.32), 8, It.IsAny<CancellationToken>()), Times.Once);
+        _suggester.Verify(s => s.SuggestAsync("rue de rennes", new GeoPoint(48.84, 2.32), 8, false, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Asks_for_towns_and_postal_codes_when_places_are_wanted()
+    {
+        _suggester.Setup(s => s.SuggestAsync("rouen", null, 5, true, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new AddressSuggestion("Rouen, France", "", "", "Rouen", "France", "FR", 49.44, 1.09)]);
+
+        var result = await new SuggestAddressesHandler(_suggester.Object)
+            .Handle(new SuggestAddressesQuery("rouen", null, null, Places: true), default);
+
+        result.Should().ContainSingle().Which.City.Should().Be("Rouen");
     }
 }

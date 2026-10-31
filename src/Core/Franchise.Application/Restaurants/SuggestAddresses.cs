@@ -6,8 +6,10 @@ namespace Franchise.Application.Restaurants;
 
 /// <summary>Address autocomplete for the checkout, the customer's saved
 /// addresses and the restaurants' own address. <paramref name="Latitude"/> /
-/// <paramref name="Longitude"/> rank the addresses near a restaurant first.</summary>
-public sealed record SuggestAddressesQuery(string? Query, double? Latitude, double? Longitude, int Limit = 5)
+/// <paramref name="Longitude"/> rank the addresses near a restaurant first.
+/// <paramref name="Places"/> adds towns and postal codes (the storefront's
+/// "restaurants near…" search).</summary>
+public sealed record SuggestAddressesQuery(string? Query, double? Latitude, double? Longitude, int Limit = 5, bool Places = false)
     : IRequest<IReadOnlyList<AddressSuggestion>>;
 
 public sealed class SuggestAddressesHandler(IAddressSuggester suggester)
@@ -33,7 +35,7 @@ public sealed class SuggestAddressesHandler(IAddressSuggester suggester)
 
         try
         {
-            return await suggester.SuggestAsync(text, near, Math.Clamp(query.Limit, 1, MaxLimit), ct);
+            return await suggester.SuggestAsync(text, near, Math.Clamp(query.Limit, 1, MaxLimit), query.Places, ct);
         }
         catch (GeocodingUnavailableException)
         {

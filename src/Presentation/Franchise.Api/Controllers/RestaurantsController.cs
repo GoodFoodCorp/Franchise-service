@@ -51,14 +51,16 @@ public sealed class RestaurantsController(IMediator mediator) : ControllerBase
     /// <summary>Can the restaurant deliver this address now, for what fee and
     /// in how long? Shown in the cart before checkout.</summary>
     /// <summary>Address autocomplete (EU street addresses). lat/lng, e.g. the
-    /// restaurant's, rank nearby addresses first. Rate limited per client.</summary>
+    /// restaurant's, rank nearby addresses first; places=true adds towns and
+    /// postal codes. Rate limited per client.</summary>
     [HttpGet("address-suggestions")]
     [AllowAnonymous]
     [EnableRateLimiting(AddressSuggestionsPolicy)]
     [ResponseCache(Duration = 300, Location = ResponseCacheLocation.Any)]
     public async Task<IActionResult> SuggestAddresses(
-        [FromQuery] string? q, [FromQuery] double? lat, [FromQuery] double? lng, [FromQuery] int limit = 5, CancellationToken ct = default) =>
-        Ok(await mediator.Send(new SuggestAddressesQuery(q, lat, lng, limit), ct));
+        [FromQuery] string? q, [FromQuery] double? lat, [FromQuery] double? lng, [FromQuery] int limit = 5,
+        [FromQuery] bool places = false, CancellationToken ct = default) =>
+        Ok(await mediator.Send(new SuggestAddressesQuery(q, lat, lng, limit, places), ct));
 
     public const string AddressSuggestionsPolicy = "address-suggestions";
 

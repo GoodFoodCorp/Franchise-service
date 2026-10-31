@@ -14,9 +14,12 @@ public sealed record AddressSuggestion(
     double Longitude);
 
 /// <summary>Search-as-you-type over street addresses, limited to the countries
-/// the platform serves. Throws <see cref="GeocodingUnavailableException"/>
-/// when the provider cannot answer.</summary>
+/// the platform serves. <c>withPlaces</c> also proposes towns and postal codes
+/// (finding the closest restaurants, not a delivery address: those have no
+/// <see cref="AddressSuggestion.Street"/>). Throws
+/// <see cref="GeocodingUnavailableException"/> when the provider cannot answer.</summary>
 public interface IAddressSuggester
 {
-    Task<IReadOnlyList<AddressSuggestion>> SuggestAsync(string query, GeoPoint? near, int limit, CancellationToken ct = default);
+    Task<IReadOnlyList<AddressSuggestion>> SuggestAsync(
+        string query, GeoPoint? near, int limit, bool withPlaces = false, CancellationToken ct = default);
 }
