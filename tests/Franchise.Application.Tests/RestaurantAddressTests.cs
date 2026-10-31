@@ -74,4 +74,19 @@ public class RestaurantAddressTests
         await act.Should().ThrowAsync<DomainException>();
         _uow.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    [Fact]
+    public async Task An_unlocated_restaurant_can_still_be_closed()
+    {
+        var id = Guid.NewGuid();
+        var restaurant = Restaurant.Import(id, "Nulle part", "nulle-part", true, "free");
+        restaurant.Update("Nulle part", "zzzz", "Atlantis", true);
+        _restaurants.Setup(r => r.GetByIdAsync(id, It.IsAny<CancellationToken>())).ReturnsAsync(restaurant);
+        _geocoder.Setup(g => g.GeocodeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((GeoPoint?)null);
+        var update = new UpdateRestaurantHandler(_restaurants.Object, _uow.Object, _geocoder.Object, _clock.Object);
+
+        var dto = await update.Handle(new UpdateRestaurantCommand(HeadOffice, id, "Nulle part", "zzzz", "Atlantis", false), default);
+
+        dto.IsActive.Should().BeFalse();
+    }
 }

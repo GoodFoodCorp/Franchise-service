@@ -173,14 +173,21 @@ public sealed class UpdateRestaurantHandler(IRestaurantRepository restaurants, I
         var restaurant = await RestaurantAccess.LoadEditable(restaurants, cmd.User, cmd.Id, ct);
 
         var moved = restaurant.Address != (cmd.Address ?? string.Empty).Trim() ||
-                    restaurant.City != (cmd.City ?? string.Empty).Trim() ||
-                    restaurant.Location is null;
+                    restaurant.City != (cmd.City ?? string.Empty).Trim();
+        var unlocated = restaurant.Location is null;
         // Only head office opens or closes a franchise in the network.
         var isActive = cmd.User.IsAdmin ? cmd.IsActive : restaurant.IsActive;
         restaurant.Update(cmd.Name, cmd.Address ?? string.Empty, cmd.City ?? string.Empty, isActive);
         if (moved)
         {
+            // A new address must exist.
             restaurant.SetLocation(await CreateRestaurantHandler.LocateOrRefuse(geocoder, restaurant, ct));
+        }
+        else if (unlocated)
+        {
+            // Same address, still unknown: try again, but never block the
+            // update (head office must be able to close such a restaurant).
+            restaurant.SetLocation(await CreateRestaurantHandler.TryLocate(geocoder, restaurant, ct));
         }
 
         await uow.SaveChangesAsync(ct);
